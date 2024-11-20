@@ -45,10 +45,10 @@ def try_summarize():
 
     # 첫 번째 통신일 경우 뉴스 기사 내용 추가
     if news_content and not memory.chat_memory.messages:
-        gpt_response= conversation_chain.predict(input=f"News: {news_content}\n위는 요약하고자 하는 뉴스내용입니다. \n User Summary: {user_message}\n아래는 사용자가 위의 뉴스를 영어로 요약한 내용입니다.\n\n이 요약본에 대해 문법적, 내용적 측면 뿐만 아니라 논리적 흐름, 일관성, 핵심 정보 강조, 명확성, 객관성, 독자의 이해 가능성, 어휘의 적절성, 그리고 중요한 내용 누락 여부를 고려하여 상세히 피드백을 해주세요. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 한글로 대답해주세요!")
+        gpt_response= conversation_chain.predict(input=f"News: {news_content}\n위는 요약하고자 하는 뉴스내용입니다. \n User Summary: {user_message}\n아래는 사용자가 위의 뉴스를 영어로 요약한 내용입니다.\n\n이 요약본에 대해 문법적, 내용적 측면 뿐만 아니라 논리적 흐름, 일관성, 핵심 정보 강조, 명확성, 객관성, 독자의 이해 가능성, 어휘의 적절성, 그리고 중요한 내용 누락 여부를 고려하여 상세히 피드백을 해주세요. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 당신은 한글로 대답해주세요!")
     else:
         # 사용자 메시지 처리
-        gpt_response = conversation_chain.predict(input=f"{user_message} \n 이는 이전 대화내용에 대한 추가적인 질문 혹은 다시 작성해본 요약본입니다. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 한글로 대답해주세요!")
+        gpt_response = conversation_chain.predict(input=f"{user_message} \n 이는 이전 대화내용에 대한 추가적인 질문 혹은 다시 작성해본 요약본입니다. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 당신은 한글로!!! 대답해주세요!")
         
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
