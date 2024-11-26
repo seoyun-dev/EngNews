@@ -99,10 +99,85 @@ def try_translate():
 
 
 
-##### 요약 모델 
+# 영어 문장 뜯어보기 기능 (GPT)
+@app.route('/analyze-sentence', methods=['POST'])
+def analyze_sentence():
+    user_id = request.headers.get('user')
+    news_sentence = request.json.get('news_sentence')
+
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+    if not news_sentence:
+        return jsonify({'error': 'sentence is required'}), 400
+
+    # 중요 단어 및 문장의 숙어 분석
+    gpt_response = llm.predict(text=f'''아래 영어 문장을 분석해주세요:\n\n
+                                    Sentence: {news_sentence}\n
+                                    1. 중요 단어의 뜻과 품사\n 
+                                    2. 문장에서 사용된 중요 숙어와 의미\n 
+                                    3. 문법적 요소 분석\n
+                                    4. 사용자가 영어 공부를 위해 유용하게 참고할 만한 사항들을 포함해주세요.\n
+                                    답변은 한글로 해주세요.''')
+
+    # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
+    response_data = {
+        'gpt_answer': gpt_response
+    }
+    return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
+
+
+# 기사 통요약 기능(한글, 영어 둘다) (GPT)
 @app.route('/summarize', methods=['POST'])
 def summarize():
-    return 
+    user_id = request.headers.get('user')
+    news_content = request.json.get('news_content')
+
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+    if not news_content:
+        return jsonify({'error': 'sentence is required'}), 400
+
+    # 중요 단어 및 문장의 숙어 분석
+    gpt_response = llm.predict(text=f'''아래 News 내용을 한글과 영어로 각각 요약해주세요!:\n\n
+                                    News: {news_content}\n
+                                    1. 한글: 한글로요약한문장 (한줄띄고) 영어: 영어로 요약한 문장 식으로 보기 쉽게 출력해주세요\n 
+                                    2. 문맥이 매끄럽고 이해하기 쉽게 요약해주세요 \n
+                                    3. 너무 짧지도 길지도 않게 요약해주세요! 핵심내용은 포함해주세요.
+                                    ''')
+
+    # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
+    response_data = {
+        'gpt_answer': gpt_response
+    }
+    return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
+
+
+
+# 기사 통번역 기능 (한<->영) (GPT)
+@app.route('/translate', methods=['POST'])
+def translate():
+    user_id = request.headers.get('user')
+    news_content = request.json.get('news_content')
+
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+    if not news_content:
+        return jsonify({'error': 'content is required'}), 400
+
+    # 중요 단어 및 문장의 숙어 분석
+    gpt_response = llm.predict(text=f'''
+                                아래 News 내용이 한글이라면 영어로 번역하고, 뉴스내용이 영어라면 한글로 번역해주세요!:\n\n
+                                News: {news_content}\n
+                                문맥이 매끄럽고 이해하기 쉽게 번역해주세요.''')
+
+    # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
+    response_data = {
+        'gpt_answer': gpt_response
+    }
+    return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
 
 
 
