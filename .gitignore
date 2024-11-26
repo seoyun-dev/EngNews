@@ -5,3 +5,5 @@ __pycache__
 cnn_dailymail
 
 models
+
+.DS_Store
