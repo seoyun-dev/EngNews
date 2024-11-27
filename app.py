@@ -1,10 +1,19 @@
 from flask import Flask, request, session, jsonify, Response
 import openai
+import os
 import json
 from secret import app_secret_key, OPENAI_API_KEY
 from langchain.memory import ConversationBufferMemory
 from langchain import ConversationChain
 from langchain_community.chat_models import ChatOpenAI
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+import torch
+import re
+import warnings
+
+# FutureWarning 억제
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 app = Flask(__name__)
 app.secret_key = app_secret_key
@@ -99,6 +108,7 @@ def try_translate():
 
 
 
+
 # 영어 문장 뜯어보기 기능 (GPT)
 @app.route('/analyze-sentence', methods=['POST'])
 def analyze_sentence():
@@ -127,6 +137,7 @@ def analyze_sentence():
 
 
 
+
 # 기사 통요약 기능(한글, 영어 둘다) (GPT)
 @app.route('/summarize', methods=['POST'])
 def summarize():
@@ -138,12 +149,11 @@ def summarize():
     if not news_content:
         return jsonify({'error': 'sentence is required'}), 400
 
-    # 중요 단어 및 문장의 숙어 분석
     gpt_response = llm.predict(text=f'''아래 News 내용을 한글과 영어로 각각 요약해주세요!:\n\n
                                     News: {news_content}\n
                                     1. 한글: 한글로요약한문장 (한줄띄고) 영어: 영어로 요약한 문장 식으로 보기 쉽게 출력해주세요\n 
                                     2. 문맥이 매끄럽고 이해하기 쉽게 요약해주세요 \n
-                                    3. 너무 짧지도 길지도 않게 요약해주세요! 핵심내용은 포함해주세요.
+                                    3. 어느정도 길어도 되니 핵심내용은 모두 포함하여 요약해주세요!
                                     ''')
 
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
@@ -166,7 +176,6 @@ def translate():
     if not news_content:
         return jsonify({'error': 'content is required'}), 400
 
-    # 중요 단어 및 문장의 숙어 분석
     gpt_response = llm.predict(text=f'''
                                 아래 News 내용이 한글이라면 영어로 번역하고, 뉴스내용이 영어라면 한글로 번역해주세요!:\n\n
                                 News: {news_content}\n
@@ -180,6 +189,148 @@ def translate():
 
 
 
+############ 학습 모델 사용
+# 통요약 모델 by BigBird-Peagsus
+@app.route('/summarize_e', methods=['POST'])
+def summarize_e():
+    auth_token = os.getenv("HUGGINGFACE_TOKEN")
 
+    user_id = request.headers.get('user')
+    news_content = request.json.get('news_content')
+
+    if not user_id:
+        return jsonify({'errorS': 'user_id is required'}), 400
+    if not news_content:
+        return jsonify({'error': 'content is required'}), 400
+    
+    # 추가된 토큰 초기화
+    tokenizer = T5Tokenizer.from_pretrained('t5-base', use_auth_token=auth_token)  # 저장된 토크나이저 경로
+    # tokenizer = T5Tokenizer.from_pretrained('tokenizer/summarize_tokenizer', use_auth_token=auth_token)  # 저장된 토크나이저 경로
+    model = T5ForConditionalGeneration.from_pretrained('models/summarize_model.pth', use_auth_token=auth_token)  # 저장된 모델 경로
+    model.eval()
+    
+    input_text = f"summarize: {news_content}"
+    input_ids = tokenizer.encode(input_text, return_tensors="pt", truncation=True, max_length=1024)
+
+    # Generate summary
+    summary_ids = model.generate(input_ids, max_length=300, num_beams=4, early_stopping=True)
+    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+
+    # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
+    response_data = {
+        'answer': summary
+    }
+    return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
+
+
+
+@app.route('/translate_t5_k2e', methods=['POST'])
+def translate_t5_k2e():
+    user_id = request.headers.get('user')
+    news_content = request.json.get('news_content')
+
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+    if not news_content:
+        return jsonify({'error': 'content is required'}), 400
+
+    # 모델 및 토크나이저 로드
+    model_ckpt = "KETI-AIR/ke-t5-base"
+    model_save_path = "models/model_weights_kotoen.pth"
+    max_token_length = 256  # 최대 토큰 길이 증가
+    tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_ckpt)
+    
+    # 가중치 로드
+    model.load_state_dict(torch.load(model_save_path,map_location=torch.device('cpu')))
+    model.eval()
+
+    sentences = re.split(r'(?<=\.)\s+', news_content)   # 마침표 후에 공백을 기준으로 문장 분리
+
+    def batch_translate(sentences, batch_size=8):
+        translated_sentences = []
+        for i in range(0, len(sentences), batch_size):
+            batch = sentences[i:i+batch_size]
+            
+            # 입력 처리 (배치 처리)
+            inputs = tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
+            
+            # 모델 출력 생성 (FP16 precision 사용)
+            inputs = {key: value for key, value in inputs.items()}  # GPU로 데이터 이동
+            outputs = model.generate(**inputs, num_beams=3, max_length=max_token_length, early_stopping=True)
+            
+            # 배치 번역 결과 디코딩
+            batch_translations = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+            translated_sentences.extend(batch_translations)
+        
+        return translated_sentences
+
+    # 배치 단위로 번역
+    translated_sentences = batch_translate(sentences, batch_size=16)
+    translated_sentences = "".join(translated_sentences)
+
+    # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
+    response_data = {
+        'answer': translated_sentences
+    }
+    return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
+
+
+
+@app.route('/translate_t5_e2k', methods=['POST'])
+def translate_t5_e2k():
+    user_id = request.headers.get('user')
+    news_content = request.json.get('news_content')
+
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+    if not news_content:
+        return jsonify({'error': 'content is required'}), 400
+
+    # 모델 및 토크나이저 로드
+    model_ckpt = "KETI-AIR/ke-t5-base"
+    model_save_path = "models/model_weights.pth"
+    max_token_length = 256  # 최대 토큰 길이 증가
+    tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_ckpt)
+    
+    # 가중치 로드
+    model.load_state_dict(torch.load(model_save_path, map_location=torch.device('cpu')))
+    model.eval()
+
+    sentences = re.split(r'(?<=\.)\s+', news_content)   # 마침표 후에 공백을 기준으로 문장 분리
+
+    def batch_translate(sentences, batch_size=8):
+        translated_sentences = []
+        for i in range(0, len(sentences), batch_size):
+            batch = sentences[i:i+batch_size]
+            
+            # 입력 처리 (배치 처리)
+            inputs = tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
+            
+            # 모델 출력 생성 (FP16 precision 사용)
+            inputs = {key: value for key, value in inputs.items()}  # GPU로 데이터 이동
+            outputs = model.generate(**inputs, num_beams=3, max_length=max_token_length, early_stopping=True)
+            
+            # 배치 번역 결과 디코딩
+            batch_translations = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+            translated_sentences.extend(batch_translations)
+            translated_sentences = "".join(translated_sentences)
+        return translated_sentences
+
+    # 배치 단위로 번역
+    translated_sentences = batch_translate(sentences, batch_size=16)
+
+    # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
+    response_data = {
+        'answer': translated_sentences
+    }
+    return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
+
+    
+    
 if __name__ == "__main__":
     app.run(debug=True)

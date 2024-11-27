@@ -6,4 +6,6 @@ cnn_dailymail
 
 models
 
+tokenizer
+
 .DS_Store
