@@ -27,17 +27,16 @@ llm = ChatOpenAI(temperature=0.0, model="gpt-4o", openai_api_key=OPENAI_API_KEY)
 
 # 요약해보기 사용자별 메모리 초기화
 summarization_data_store = {}
+summarization_old_news_content_store = {}
 ##### 요약해보기 모델 (GPT)
 @app.route('/try-summarize', methods=['POST'])
 def try_summarize():
     user_id = request.headers.get('user')
-    user_message = request.json.get('message')
     news_content = request.json.get('news_content', None)
+    user_message = request.json.get('message', None)
 
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
-    if not user_message:
-        return jsonify({'error': 'message is required'}), 400
 
     # 사용자별 메모리 객체 생성 또는 가져오기
     if user_id not in summarization_data_store:
@@ -45,18 +44,25 @@ def try_summarize():
     memory = summarization_data_store[user_id]
 
     # 대화 체인 초기화 (사용자별로 메모리와 연결된 대화 체인 생성)
-    conversation_chain = ConversationChain(
+    summarization_conversation_chain = ConversationChain(
         llm     = llm,
         memory  = memory,
         verbose = True  # 대화 히스토리 확인용
     )
 
-    # 첫 번째 통신일 경우 뉴스 기사 내용 추가
-    if news_content and not memory.chat_memory.messages:
-        gpt_response= conversation_chain.predict(input=f"News: {news_content}\n위는 요약하고자 하는 뉴스내용입니다. \n User Summary: {user_message}\n아래는 사용자가 위의 뉴스를 영어로 요약한 내용입니다.\n\n이 요약본에 대해 문법적, 내용적 측면 뿐만 아니라 논리적 흐름, 일관성, 핵심 정보 강조, 명확성, 객관성, 독자의 이해 가능성, 어휘의 적절성, 그리고 중요한 내용 누락 여부를 고려하여 상세히 피드백을 해주세요. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 당신은 한글로 대답해주세요!")
+    # 사용자별 이전 뉴스 문장을 저장하고 가져오기
+    old_news_sentence = summarization_old_news_content_store.get(user_id, None)
+
+    # news_sentence가 변경되면 메모리 초기화 (news_sentence가 None이 아닐 때만)
+    if news_content is not None and (old_news_sentence != news_content):
+        memory.clear()  # 대화 체인 메모리 초기화
+        summarization_old_news_content_store[user_id] = news_content
+        gpt_response = summarization_conversation_chain.predict(input=f"NEWS CONTENT : {news_content} \n 사용자는 위 내용을 한글 또는 영어로 요약하며 영어 공부를 할거야. 상요자가 요약하도록 \"안녕하세요! 뉴스 내용를 요약해보세요!\" 라고만 말해줘!")
     else:
-        # 사용자 메시지 처리
-        gpt_response = conversation_chain.predict(input=f"{user_message} \n 이는 이전 대화내용에 대한 추가적인 질문 혹은 다시 작성해본 요약본입니다. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 당신은 한글로!!! 대답해주세요!")
+        gpt_response = summarization_conversation_chain.predict(input=f'''
+                사용자의 질문 or 요약본: {user_message} \n
+                사용자는 gpt와의 대화를 통해 요약 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문or요약본에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!
+                ''')
         
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
@@ -69,17 +75,16 @@ def try_summarize():
 
 # 번역해보기 사용자별 메모리 초기화
 translation_data_store = {}
+translation_old_news_sentence_store = {}
 ##### 번역해보기 모델 (GPT)
 @app.route('/try-translate', methods=['POST'])
 def try_translate():
     user_id = request.headers.get('user')
-    user_message = request.json.get('message')
-    news_content = request.json.get('news_content', None)
+    news_sentence = request.json.get('news_sentence', None)
+    user_message = request.json.get('message', None)
 
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
-    if not user_message:
-        return jsonify({'error': 'message is required'}), 400
 
     # 사용자별 메모리 객체 생성 또는 가져오기
     if user_id not in translation_data_store:
@@ -87,24 +92,32 @@ def try_translate():
     memory = translation_data_store[user_id]
 
     # 대화 체인 초기화 (사용자별로 메모리와 연결된 대화 체인 생성)
-    conversation_chain = ConversationChain(
+    translation_conversation_chain = ConversationChain(
         llm     = llm,
         memory  = memory,
         verbose = True  # 대화 히스토리 확인용
     )
 
-    # 첫 번째 통신일 경우 뉴스 기사 내용 추가
-    if news_content and not memory.chat_memory.messages:
-        gpt_response= conversation_chain.predict(input=f"뉴스 문장: {news_content}\n \n 사용자가 뉴스 문장을 한글은 영어로, 영어는 한글로 번역한 문장: {user_message}\n\n사용자가 뉴스 문장을 번역한 문장에 대해 문법적, 내용적 등 다양한 기준을 고려하여 상세히 피드백을 해주세요. 사용자는 영어문장은 한글로 번역하고, 한글은 영어로 번역함으로써 영어 공부를 하고자 합니다. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 뉴스 문장을 제대로 번역했는지 확인하세요! 그리고 당신은 한글로 피드백 해주세요!")
+    # 사용자별 이전 뉴스 문장을 저장하고 가져오기
+    old_news_sentence = translation_old_news_sentence_store.get(user_id, None)
+
+    # news_sentence가 변경되면 메모리 초기화 (news_sentence가 None이 아닐 때만)
+    if news_sentence is not None and (old_news_sentence != news_sentence):
+        memory.clear()  # 대화 체인 메모리 초기화
+        translation_old_news_sentence_store[user_id] = news_sentence
+        gpt_response = translation_conversation_chain.predict(input=f"사용자에게 {news_sentence}를 한글이면 영어로, 영어면 한글로 번역해달라고 임무를 줘! \"안녕하세요! {news_sentence}를 번역해보세요!\" 라고만 말해줘!")
     else:
-        # 사용자 메시지 처리
-        gpt_response = conversation_chain.predict(input=f"{user_message} \n 이는 이전 번역역습내용에 대한 추가적인 질문 혹은 사용자가다시 작성해본 한글은 영어로, 영어는 한글로 번역한 것입니다. 사용자는 이를 통해 영어 공부를 하고자 하는 것이니 목적에 맞게 답변 해주세요. 그리고 당신은 한글로 피드백 해주세요!")
+        gpt_response = translation_conversation_chain.predict(input=f'''
+                사용자의 질문: {user_message} \n
+                사용자는 gpt와의 대화를 통해 한글은 영어로, 영어는 한글로 사용자가 직접 번역하며 공부를 하고자 합니다.  당신은 친절한 영어강사가 되어 사용자의 질문에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!
+                ''')
         
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
         'gpt_answer': gpt_response
     }
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
 
 
 
@@ -224,7 +237,7 @@ def summarize_e():
 
 
 
-
+# 한>영 통번역 모델 by T5
 @app.route('/translate_t5_k2e', methods=['POST'])
 def translate_t5_k2e():
     user_id = request.headers.get('user')
@@ -279,6 +292,7 @@ def translate_t5_k2e():
 
 
 
+# 영>한 통번역 모델 by T5
 @app.route('/translate_t5_e2k', methods=['POST'])
 def translate_t5_e2k():
     user_id = request.headers.get('user')
