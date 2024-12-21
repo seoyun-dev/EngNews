@@ -4,30 +4,29 @@ import os
 import json
 from secret import app_secret_key, OPENAI_API_KEY
 from langchain.memory import ConversationBufferMemory
-from langchain import ConversationChain
-from langchain_community.chat_models import ChatOpenAI
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-from transformers import T5Tokenizer, T5ForConditionalGeneration
-# import torch
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_openai import ChatOpenAI
 import re
 import warnings
 
-# FutureWarning 억제
-warnings.filterwarnings("ignore", category=FutureWarning)
+# # FutureWarning 억제
+# warnings.filterwarnings("ignore", category=FutureWarning)
 
 app = Flask(__name__)
 app.secret_key = app_secret_key
 
-
-
-##### GPT 설정
+# ##### GPT 설정
 llm = ChatOpenAI(temperature=0.0, model="gpt-4o", openai_api_key=OPENAI_API_KEY)
+# # 사용자별 메모리 초기화
+data_store = {}
 
+# 사용자별 메모리 객체 생성 또는 가져오기
+def get_session_history(user_id: str) -> InMemoryChatMessageHistory:
+    if user_id not in data_store:
+        data_store[user_id] = InMemoryChatMessageHistory()
+    return data_store[user_id]
 
-
-# 요약해보기 사용자별 메모리 초기화
-summarization_data_store = {}
-summarization_old_news_content_store = {}
 ##### 요약해보기 모델 (GPT)
 @app.route('/try-summarize', methods=['POST'])
 def try_summarize():
@@ -38,44 +37,42 @@ def try_summarize():
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
 
-    # 사용자별 메모리 객체 생성 또는 가져오기
-    if user_id not in summarization_data_store:
-        summarization_data_store[user_id] = ConversationBufferMemory()
-    memory = summarization_data_store[user_id]
-
     # 대화 체인 초기화 (사용자별로 메모리와 연결된 대화 체인 생성)
-    summarization_conversation_chain = ConversationChain(
-        llm     = llm,
-        memory  = memory,
-        verbose = True  # 대화 히스토리 확인용
-    )
+    summarization_chain = RunnableWithMessageHistory(llm, get_session_history)
+
+    # 사용자별 데이터 초기화 확인
+    if user_id not in data_store:
+        data_store[user_id] = InMemoryChatMessageHistory()
 
     # 사용자별 이전 뉴스 문장을 저장하고 가져오기
-    old_news_sentence = summarization_old_news_content_store.get(user_id, None)
+    old_news_sentence = data_store.get(user_id, None)
 
     # news_sentence가 변경되면 메모리 초기화 (news_sentence가 None이 아닐 때만)
     if news_content is not None and (old_news_sentence != news_content):
-        memory.clear()  # 대화 체인 메모리 초기화
-        summarization_old_news_content_store[user_id] = news_content
-        gpt_response = summarization_conversation_chain.predict(input=f"NEWS CONTENT : {news_content} \n 사용자는 위 내용을 한글 또는 영어로 요약하며 영어 공부를 할거야. 상요자가 요약하도록 \"안녕하세요! 뉴스 내용를 요약해보세요!\" 라고만 말해줘!")
+        data_store[user_id].clear()  # 대화 체인 메모리 초기화
+        data_store[user_id] = InMemoryChatMessageHistory()
+        gpt_response = summarization_chain.invoke(
+            f"NEWS CONTENT : {news_content} \n 사용자는 위 내용을 한글 또는 영어로 요약하며 영어 공부를 할거야. 사용자가 요약하도록 \"안녕하세요! 뉴스 내용을 요약해보세요!\" 라고만 말해줘!",
+            config={"configurable": {"session_id": user_id}}
+        )
     else:
-        gpt_response = summarization_conversation_chain.predict(input=f'''
-                사용자의 질문 or 요약본: {user_message} \n
-                사용자는 gpt와의 대화를 통해 요약 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문or요약본에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!
-                ''')
+        gpt_response = summarization_chain.invoke(
+            f'''사용자의 질문 or 요약본: {user_message} \n
+            사용자는 gpt와의 대화를 통해 요약 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문or요약본에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!''',
+            config={"configurable": {"session_id": user_id}}
+        )
         
+    # gpt_response에서 필요한 내용 추출
+    response_content = gpt_response.content if hasattr(gpt_response, 'content') else str(gpt_response)
+    
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
-        'gpt_answer': gpt_response
+        'gpt_answer': response_content,
+        'data_store' : str(data_store[user_id])
     }
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
 
 
-
-
-# 번역해보기 사용자별 메모리 초기화
-translation_data_store = {}
-translation_old_news_sentence_store = {}
 ##### 번역해보기 모델 (GPT)
 @app.route('/try-translate', methods=['POST'])
 def try_translate():
@@ -86,43 +83,39 @@ def try_translate():
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
 
-    # 사용자별 메모리 객체 생성 또는 가져오기
-    if user_id not in translation_data_store:
-        translation_data_store[user_id] = ConversationBufferMemory()
-    memory = translation_data_store[user_id]
-
     # 대화 체인 초기화 (사용자별로 메모리와 연결된 대화 체인 생성)
-    translation_conversation_chain = ConversationChain(
-        llm     = llm,
-        memory  = memory,
-        verbose = True  # 대화 히스토리 확인용
-    )
+    translation_chain = RunnableWithMessageHistory(llm, get_session_history)
 
     # 사용자별 이전 뉴스 문장을 저장하고 가져오기
-    old_news_sentence = translation_old_news_sentence_store.get(user_id, None)
+    old_news_sentence = data_store.get(user_id, None)
 
     # news_sentence가 변경되면 메모리 초기화 (news_sentence가 None이 아닐 때만)
-    if news_sentence is not None and (old_news_sentence != news_sentence):
-        memory.clear()  # 대화 체인 메모리 초기화
-        translation_old_news_sentence_store[user_id] = news_sentence
-        gpt_response = translation_conversation_chain.predict(input=f"사용자에게 {news_sentence}를 한글이면 영어로, 영어면 한글로 번역해달라고 임무를 줘! \"안녕하세요! {news_sentence}를 번역해보세요!\" 라고만 말해줘!")
+    if news_sentence and not None and (old_news_sentence != news_sentence):
+        if user_id in data_store:
+            data_store[user_id].clear()
+        data_store[user_id] = InMemoryChatMessageHistory()
+        gpt_response = translation_chain.invoke(
+            f"사용자에게 {news_sentence}를 한글이면 영어로, 영어면 한글로 번역해달라고 임무를 줘! \"안녕하세요! 뉴스 문장을 번역해보세요!\" 라고만 말해줘! 꼭 저렇게만 대답해!",
+            config={"configurable": {"session_id": user_id}}
+        )
     else:
-        gpt_response = translation_conversation_chain.predict(input=f'''
-                사용자의 질문: {user_message} \n
-                사용자는 gpt와의 대화를 통해 한글은 영어로, 영어는 한글로 사용자가 직접 번역하며 공부를 하고자 합니다.  당신은 친절한 영어강사가 되어 사용자의 질문에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!
-                ''')
-        
+        gpt_response = translation_chain.invoke(
+            f'''사용자의 질문: {user_message} \n
+            사용자는 gpt와의 대화를 통해 한글은 영어로, 영어는 한글로 사용자가 직접 번역하며 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!''',
+            config={"configurable": {"session_id": user_id}}
+        )
+    
+    # gpt_response에서 필요한 내용 추출
+    response_content = gpt_response.content if hasattr(gpt_response, 'content') else str(gpt_response)
+    
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
-        'gpt_answer': gpt_response
+        'gpt_answer': response_content
     }
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
 
 
-
-
-
-# 영어 문장 뜯어보기 기능 (GPT)
+##### 영어 문장 뜯어보기 기능 (GPT)
 @app.route('/analyze-sentence', methods=['POST'])
 def analyze_sentence():
     user_id = request.headers.get('user')
@@ -149,9 +142,7 @@ def analyze_sentence():
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
 
 
-
-
-# 기사 통요약 기능(한글, 영어 둘다) (GPT)
+##### 기사 통요약 기능(한글, 영어 둘다) (GPT)
 @app.route('/summarize', methods=['POST'])
 def summarize():
     user_id = request.headers.get('user')
@@ -166,8 +157,7 @@ def summarize():
                                     News: {news_content}\n
                                     1. 한글: 한글로요약한문장 (한줄띄고) 영어: 영어로 요약한 문장 식으로 보기 쉽게 출력해주세요\n 
                                     2. 문맥이 매끄럽고 이해하기 쉽게 요약해주세요 \n
-                                    3. 어느정도 길어도 되니 핵심내용은 모두 포함하여 요약해주세요!
-                                    ''')
+                                    3. 어느정도 길어도 되니 핵심내용은 모두 포함하여 요약해주세요!''')
 
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
@@ -176,9 +166,7 @@ def summarize():
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
 
 
-
-
-# 기사 통번역 기능 (한<->영) (GPT)
+##### 기사 통번역 기능 (한<->영) (GPT)
 @app.route('/translate', methods=['POST'])
 def translate():
     user_id = request.headers.get('user')
@@ -356,5 +344,5 @@ def translate():
 
     
     
-# if __name__ == "__main__":
-#     app.run(debug=True)
+if __name__ == "__main__":
+    app.run(debug=True)
