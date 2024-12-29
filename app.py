@@ -67,10 +67,11 @@ def try_summarize():
     
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
-        'gpt_answer': response_content,
-        'data_store' : str(data_store[user_id])
+        'gpt_answer': response_content
+        # 'data_store' : str(data_store[user_id])
     }
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
 
 
 ##### 번역해보기 모델 (GPT)
@@ -86,31 +87,35 @@ def try_translate():
     # 대화 체인 초기화 (사용자별로 메모리와 연결된 대화 체인 생성)
     translation_chain = RunnableWithMessageHistory(llm, get_session_history)
 
+    # 사용자별 데이터 초기화 확인
+    if user_id not in data_store:
+        data_store[user_id] = InMemoryChatMessageHistory()
+
     # 사용자별 이전 뉴스 문장을 저장하고 가져오기
     old_news_sentence = data_store.get(user_id, None)
 
     # news_sentence가 변경되면 메모리 초기화 (news_sentence가 None이 아닐 때만)
-    if news_sentence and not None and (old_news_sentence != news_sentence):
-        if user_id in data_store:
-            data_store[user_id].clear()
+    if news_sentence is not None and (old_news_sentence != news_sentence):
+        data_store[user_id].clear()  # 대화 체인 메모리 초기화
         data_store[user_id] = InMemoryChatMessageHistory()
         gpt_response = translation_chain.invoke(
-            f"사용자에게 {news_sentence}를 한글이면 영어로, 영어면 한글로 번역해달라고 임무를 줘! \"안녕하세요! 뉴스 문장을 번역해보세요!\" 라고만 말해줘! 꼭 저렇게만 대답해!",
+            f"NEWS CONTENT : {news_sentence} \n 사용자는 위 내용이 한글이면 영어로, 영어면 한글로 번역하며 영어 공부를 할거야. 사용자가 번역하도록 \"안녕하세요! 뉴스 문장을 번역해보세요!\" 라고만 말해줘!",
             config={"configurable": {"session_id": user_id}}
         )
     else:
         gpt_response = translation_chain.invoke(
-            f'''사용자의 질문: {user_message} \n
-            사용자는 gpt와의 대화를 통해 한글은 영어로, 영어는 한글로 사용자가 직접 번역하며 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!''',
+            f'''사용자의 질문 or 번역본: {user_message} \n
+            사용자는 gpt와의 대화를 통해 한글 영어 번역 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문or번역본에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!''',
             config={"configurable": {"session_id": user_id}}
         )
-    
+        
     # gpt_response에서 필요한 내용 추출
     response_content = gpt_response.content if hasattr(gpt_response, 'content') else str(gpt_response)
     
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
         'gpt_answer': response_content
+        # 'data_store' : str(data_store[user_id])
     }
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
 
