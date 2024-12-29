@@ -99,25 +99,27 @@ def try_translate():
         data_store[user_id].clear()  # 대화 체인 메모리 초기화
         data_store[user_id] = InMemoryChatMessageHistory()
         gpt_response = translation_chain.invoke(
-            f"NEWS CONTENT : {news_sentence} \n 사용자는 위 내용이 한글이면 영어로, 영어면 한글로 번역하며 영어 공부를 할거야. 사용자가 번역하도록 \"안녕하세요! 뉴스 문장을 번역해보세요!\" 라고만 말해줘!",
+            f"NEWS SENTENCE : {news_sentence} \n 사용자는 news_sentence 내용 이 한글이면 영어로, 영어면 한글로 번역하며 영어 공부를 할거야. 사용자가 번역하도록 \"안녕하세요! 뉴스 문장을 번역해보세요!\" 라고만 말해줘!",
             config={"configurable": {"session_id": user_id}}
         )
     else:
         gpt_response = translation_chain.invoke(
-            f'''사용자의 질문 or 번역본: {user_message} \n
-            사용자는 gpt와의 대화를 통해 한글 영어 번역 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 사용자의 질문or번역본에 대답해주세요. 그리고 사용자는 한국사람이므로 한글로 피드백 해주세요!''',
+            f'''사용자의 번역본: {user_message} \n
+            사용자는 gpt와의 대화를 통해 대화 시작에 보냈던 news_sentence를>한영 번역하는 공부를 하고자 합니다. 당신은 친절한 영어강사가 되어 news_sentence를 사용자가 올바르게 번역했는지 사용자의 번역본을 보고 피드백해주세요. 그
+리고 사용자는 한국사람이므로 한글로 피드백 해주세요!''',
             config={"configurable": {"session_id": user_id}}
         )
-        
+
     # gpt_response에서 필요한 내용 추출
     response_content = gpt_response.content if hasattr(gpt_response, 'content') else str(gpt_response)
-    
+
     # 줄바꿈과 UTF-8 인코딩을 유지하여 JSON 형태로 반환
     response_data = {
         'gpt_answer': response_content
         # 'data_store' : str(data_store[user_id])
     }
     return Response(json.dumps(response_data, ensure_ascii=False, indent=2), content_type='application/json; charset=utf-8')
+
 
 
 ##### 영어 문장 뜯어보기 기능 (GPT)
